@@ -1,9 +1,9 @@
 # Aplicación web para descargar videos de YouTube en formato mp3 o mp4 
-
 import streamlit as st
+import io
 import os
 
-if ["yt-url"] not in st.session_state:
+if "yt-url" not in st.session_state:
     st.session_state["yt-url"] = ""
 
 st.set_page_config(
@@ -25,9 +25,9 @@ def download(ydl_opts, url, filename):
             filename = title + (".mp4" if filename.endswith(".mp4") else ".mp3")
 
             return {"filename": filename, "title": title, "thumbnail_url": thumbnail_url}
-
     except Exception as ex:
         st.error(f"Error: {ex}")
+        return None
 
 
 def yt_downloader():
@@ -63,7 +63,8 @@ def yt_downloader():
             dl_format = st.session_state["format"]
 
             download_info = st.info("⏳ Processing download, please wait...")
-            
+
+            # Ajuste según formato
             if dl_format == "MP4 (Video)":
                 if st.session_state["quality"] == "best (max available)":
                     fmt = "bestvideo+bestaudio/best"
@@ -82,46 +83,53 @@ def yt_downloader():
                     "merge_output_format": "mp4"
                 }
                 filename = "video.mp4"
-            else:
+                mime_type = "video/mp4"
+
+            else:  # MP3
                 ydl_opts = {
                     "format": "bestaudio/best",
                     "outtmpl": "audio.%(ext)s",
-                    "writethumbnail": True,
                     "postprocessors": [
                         {
                             "key": "FFmpegExtractAudio",
                             "preferredcodec": "mp3",
                             "preferredquality": "192",
                         },
-                        {
-                            "key": "FFmpegMetadata",
-                        },
-                        {
-                            "key": "EmbedThumbnail",
-                            "already_have_thumbnail": False,
-                        }
+                        {"key": "FFmpegMetadata"},
                     ],
                 }
                 filename = "audio.mp3"
-            
+                mime_type = "audio/mpeg"
+
             result = download(ydl_opts, url, filename)
             download_info.empty()
 
-            if result:
+            if result and os.path.exists(filename):
                 st.image(result["thumbnail_url"], width=300)
                 st.subheader(result["title"])
-                st.success(f"✅ Downloaded successfully!")
+                st.success("✅ Downloaded successfully!")
+
+                # Pasar el archivo a buffer en memoria
                 with open(filename, "rb") as f:
-                    st.download_button(f"📥 Descargar {result["filename"]}", f, file_name=result["filename"])
+                    buffer = io.BytesIO(f.read())
 
-            os.remove(filename)
+                st.download_button(
+                    f"📥 Descargar {result['filename']}",
+                    data=buffer,
+                    file_name=result["filename"],
+                    mime=mime_type,
+                )
 
-    # contenedor para mostrar el formato de la url a ingresar
+                # Borrar archivo temporal del servidor
+                os.remove(filename)
+
+    # Ejemplo de URLs válidas
     with st.expander("URL Format Example"):
         st.write("You can enter URLs from the following sites:")
         st.markdown("""
         - https://www.youtube.com/watch?v=example
         - https://www.youtube.com/playlist?list=example
         """)
+
 if __name__ == "__main__":
     yt_downloader()
