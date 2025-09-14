@@ -80,7 +80,12 @@ def yt_downloader():
                 ydl_opts = {
                     "outtmpl": "video.mp4",
                     "format": fmt,
-                    "merge_output_format": "mp4"
+                    "merge_output_format": "mp4",
+                    "http_headers": {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                    "Chrome/115.0 Safari/537.36"
+                    }
                 }
                 filename = "video.mp4"
                 mime_type = "video/mp4"
@@ -97,6 +102,11 @@ def yt_downloader():
                         },
                         {"key": "FFmpegMetadata"},
                     ],
+                    "http_headers": {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                "Chrome/115.0 Safari/537.36"
+                }
                 }
                 filename = "audio.mp3"
                 mime_type = "audio/mpeg"
