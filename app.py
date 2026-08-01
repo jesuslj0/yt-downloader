@@ -120,6 +120,14 @@ label[for] {
 }
 .stTextInput input::placeholder { color: #252525 !important; }
 
+/* Oculta el "Press Enter to submit form" que Streamlit añade al input */
+.stTextInput [data-testid="InputInstructions"],
+.stTextInput [data-testid="stWidgetInstructions"],
+[data-testid="InputInstructions"],
+[data-testid="stWidgetInstructions"] {
+    display: none !important;
+}
+
 /* ── Selectbox ── */
 [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
     background: #080808 !important;
@@ -561,7 +569,6 @@ def yt_downloader():
     with st.expander("Supported URL formats"):
         st.markdown("""
 - `https://www.youtube.com/watch?v=...`
-- `https://www.youtube.com/playlist?list=...`
 - `https://youtu.be/...`
         """)
 
