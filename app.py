@@ -175,30 +175,51 @@ label[for] {
 }
 [data-testid="stRadio"] label:hover { border-color: #333 !important; }
 
-/* ── Botón Convert ── */
-[data-testid="stFormSubmitButton"] button,
-[data-testid="stFormSubmitButton"] > div > button {
-    background: #e02020 !important;
-    color: #ffffff !important;
-    border: none !important;
+/* ── Botones del formulario (base común) ── */
+[data-testid="stFormSubmitButton"] button {
     border-radius: 4px !important;
     font-family: 'Syne', sans-serif !important;
     font-weight: 700 !important;
     font-size: 0.73rem !important;
     letter-spacing: 0.22em !important;
     text-transform: uppercase !important;
-    padding: 0.7rem 1.5rem !important;
+    padding: 0.7rem 1rem !important;
     width: 100% !important;
-    transition: background 0.12s, transform 0.08s !important;
+    transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.08s !important;
     cursor: pointer !important;
 }
-[data-testid="stFormSubmitButton"] button:hover {
+
+/* ── Botón Convert (primario) ── */
+[data-testid="stBaseButton-primaryFormSubmit"] {
+    background: #e02020 !important;
+    color: #ffffff !important;
+    border: 1px solid #e02020 !important;
+}
+[data-testid="stBaseButton-primaryFormSubmit"]:hover {
     background: #c91818 !important;
+    border-color: #c91818 !important;
     transform: translateY(-1px) !important;
 }
-[data-testid="stFormSubmitButton"] button:active {
+[data-testid="stBaseButton-primaryFormSubmit"]:active {
     transform: translateY(0) !important;
     background: #b01010 !important;
+}
+
+/* ── Botón Clear (secundario) ── */
+[data-testid="stBaseButton-secondaryFormSubmit"] {
+    background: transparent !important;
+    color: #707070 !important;
+    border: 1px solid #222 !important;
+}
+[data-testid="stBaseButton-secondaryFormSubmit"]:hover {
+    border-color: #e02020 !important;
+    color: #e02020 !important;
+    background: rgba(224,32,32,0.04) !important;
+    transform: translateY(-1px) !important;
+}
+[data-testid="stBaseButton-secondaryFormSubmit"]:active {
+    transform: translateY(0) !important;
+    background: rgba(224,32,32,0.09) !important;
 }
 
 /* ── Botón Descargar ── */
@@ -370,6 +391,10 @@ HEADER_HTML = """
 """
 
 
+FORMAT_OPTIONS = ["MP3 (Audio)", "MP4 (Video)"]
+QUALITY_OPTIONS = ["best (max available)", "1080p", "720p", "480p", "360p"]
+
+
 def format_file_size(num_bytes):
     size = float(num_bytes)
     for unit in ("B", "KB", "MB", "GB"):
@@ -379,12 +404,43 @@ def format_file_size(num_bytes):
     return f"{size:.1f} TB"
 
 
+def embed_square_cover(mp3_path, thumb_path):
+    from PIL import Image
+    from mutagen.id3 import ID3, APIC, ID3NoHeaderError
+
+    with Image.open(thumb_path) as img:
+        side = min(img.size)
+        left = (img.width - side) // 2
+        top = (img.height - side) // 2
+        square = img.convert("RGB").crop((left, top, left + side, top + side))
+        cover = io.BytesIO()
+        square.save(cover, format="JPEG", quality=90)
+
+    try:
+        tags = ID3(mp3_path)
+    except ID3NoHeaderError:
+        tags = ID3()
+    tags.delall("APIC")
+    tags.add(APIC(encoding=0, mime="image/jpeg", type=3, desc="Cover", data=cover.getvalue()))
+    tags.save(mp3_path)
+
+
 def download(ydl_opts, url, filename):
     import yt_dlp as ydl
 
+    def clean_url_list(raw_url: str):
+        if not raw_url:
+            return ""
+        if raw_url.startswith('https://youtu.be/'): 
+            url_sin_list = raw_url.split('?list')
+        else: 
+            url_sin_list = raw_url.split('&list')
+        return url_sin_list[0]
+
     try:
         with ydl.YoutubeDL(ydl_opts) as ydl_:
-            info_dict = ydl_.extract_info(url, download=True)
+            clean_url = clean_url_list(url)
+            info_dict = ydl_.extract_info(clean_url, download=True)
             thumbnail_url = info_dict.get("thumbnail", None)
             title = info_dict.get("title", "Unknown Title")
             filename = title + (".mp4" if filename.endswith(".mp4") else ".mp3")
@@ -392,6 +448,15 @@ def download(ydl_opts, url, filename):
     except Exception as ex:
         st.error(f"Error: {ex}")
         return None
+
+
+def clear_form():
+    # Se ejecuta como callback del submit, antes del rerun, así que sí puede
+    # reescribir el estado de widgets ya instanciados en el run anterior.
+    st.session_state["input-url"] = ""
+    st.session_state["yt-url"] = ""
+    st.session_state["format"] = FORMAT_OPTIONS[0]
+    st.session_state["quality"] = QUALITY_OPTIONS[0]
 
 
 def yt_downloader():
@@ -444,17 +509,23 @@ def yt_downloader():
                 spinner_slot = st.empty()
             format_col, quality_col = st.columns(2)
             with format_col:
-                formato = st.radio("Format", ["MP3 (Audio)", "MP4 (Video)"], key="format", horizontal=True)
+                formato = st.radio("Format", FORMAT_OPTIONS, key="format", horizontal=True)
             with quality_col:
-                calidad = st.selectbox(
-                    "Quality",
-                    ["best (max available)", "1080p", "720p", "480p", "360p"],
-                    key="quality",
-                )
+                calidad = st.selectbox("Quality", QUALITY_OPTIONS, key="quality")
 
-            _, button_col = st.columns([3, 1])
+            _, clear_col, button_col = st.columns([1.6, 1, 1])
+            with clear_col:
+                st.form_submit_button(
+                    "Clear",
+                    on_click=clear_form,
+                    use_container_width=True,
+                )
             with button_col:
-                submitted = st.form_submit_button("Convert", use_container_width=True)
+                submitted = st.form_submit_button(
+                    "Convert",
+                    type="primary",
+                    use_container_width=True,
+                )
 
             if submitted and txt_input:
                 st.session_state["yt-url"] = st.session_state["input-url"]
@@ -517,6 +588,9 @@ def yt_downloader():
                     **base_opts,
                     "format": "bestaudio/best",
                     "outtmpl": "audio.%(ext)s",
+                    # La miniatura se deja en disco (sin EmbedThumbnail) para recortarla
+                    # a cuadrado e incrustarla después con embed_square_cover().
+                    "writethumbnail": True,
                     "postprocessors": [
                         {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"},
                         {"key": "FFmpegMetadata"},
@@ -548,6 +622,19 @@ def yt_downloader():
                 os.remove(cookie_path)
 
             if result and os.path.exists(filename):
+                # writethumbnail deja la miniatura junto al mp3 ("audio.webp"/"audio.jpg").
+                for thumb in [p for p in glob.glob("audio.*") if p != filename]:
+                    try:
+                        if filename.endswith(".mp3"):
+                            embed_square_cover(filename, thumb)
+                    except Exception as ex:
+                        st.warning(f"Could not embed cover art: {ex}")
+                    finally:
+                        try:
+                            os.remove(thumb)
+                        except OSError:
+                            pass
+
                 file_size = format_file_size(os.path.getsize(filename))
 
                 st.subheader(result["title"])
