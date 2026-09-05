@@ -86,7 +86,6 @@ label[for] {
     align-items: center !important;
     justify-content: center !important;
     height: 100%;
-    padding-bottom: 0.1rem;
 }
 .ytc-spinner {
     width: 20px;
@@ -180,11 +179,12 @@ label[for] {
     border-radius: 4px !important;
     font-family: 'Syne', sans-serif !important;
     font-weight: 700 !important;
-    font-size: 0.73rem !important;
-    letter-spacing: 0.22em !important;
+    font-size: 0.68rem !important;
+    letter-spacing: 0.06em !important;
     text-transform: uppercase !important;
-    padding: 0.7rem 1rem !important;
+    padding: 0.62rem 0.4rem !important;
     width: 100% !important;
+    white-space: nowrap !important;
     transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.08s !important;
     cursor: pointer !important;
 }
@@ -446,8 +446,7 @@ def download(ydl_opts, url, filename):
             filename = title + (".mp4" if filename.endswith(".mp4") else ".mp3")
             return {"filename": filename, "title": title, "thumbnail_url": thumbnail_url}
     except Exception as ex:
-        st.error(f"Error: {ex}")
-        return None
+        return {"error": str(ex)}
 
 
 def clear_form():
@@ -457,6 +456,7 @@ def clear_form():
     st.session_state["yt-url"] = ""
     st.session_state["format"] = FORMAT_OPTIONS[0]
     st.session_state["quality"] = QUALITY_OPTIONS[0]
+    st.session_state.pop("result", None)
 
 
 def yt_downloader():
@@ -498,13 +498,28 @@ def yt_downloader():
                         st.session_state["cookie_file_bytes"] = uploaded.read()
 
         with url_form:
-            input_col, spinner_col = st.columns([5, 1], vertical_alignment="bottom")
+            input_col, spinner_col, button_col, clear_col = st.columns(
+                [3, 0.7, 1.25, 1.25], vertical_alignment="bottom"
+            )
             with input_col:
                 txt_input = st.text_input(
                     "Video URL",
                     placeholder="https://youtube.com/watch?v=...",
                     key="input-url",
                 )
+            with button_col:
+                submitted = st.form_submit_button(
+                    "Convert",
+                    type="primary",
+                    use_container_width=True,
+                )
+            with clear_col:
+                st.form_submit_button(
+                    "Clear",
+                    on_click=clear_form,
+                    use_container_width=True,
+                )
+
             with spinner_col:
                 spinner_slot = st.empty()
             format_col, quality_col = st.columns(2)
@@ -513,26 +528,24 @@ def yt_downloader():
             with quality_col:
                 calidad = st.selectbox("Quality", QUALITY_OPTIONS, key="quality")
 
-            _, clear_col, button_col = st.columns([1.6, 1, 1])
-            with clear_col:
-                st.form_submit_button(
-                    "Clear",
-                    on_click=clear_form,
-                    use_container_width=True,
-                )
-            with button_col:
-                submitted = st.form_submit_button(
-                    "Convert",
-                    type="primary",
-                    use_container_width=True,
-                )
 
             if submitted and txt_input:
                 st.session_state["yt-url"] = st.session_state["input-url"]
 
-        if st.session_state.get("yt-url"):
-            url = st.session_state["yt-url"]
-            dl_format = st.session_state["format"]
+        # st.download_button provoca un rerun completo del script, así que la conversión
+        # se identifica con una clave ("job") y sólo se ejecuta si lo pedido no coincide
+        # con lo que ya está en session_state. De lo contrario, pulsar Descargar (o
+        # cualquier otra interacción) relanzaría yt-dlp desde cero.
+        job = (
+            st.session_state.get("yt-url", ""),
+            st.session_state["format"],
+            st.session_state["quality"],
+            st.session_state.get("cookie_method", "None"),
+        )
+        cached = st.session_state.get("result")
+
+        if job[0] and (cached is None or cached["job"] != job):
+            url, dl_format, cookie_method = job[0], job[1], job[3]
 
             # Restos de una descarga previa incompleta (p.ej. "audio.mp4.part") hacen que
             # yt-dlp intente reanudarla con un header Range que el servidor ya no acepta,
@@ -548,8 +561,6 @@ def yt_downloader():
                 '<div class="ytc-spinner-wrap"><div class="ytc-spinner"></div></div>',
                 unsafe_allow_html=True,
             )
-
-            cookie_method = st.session_state.get("cookie_method", "None")
 
             # Opciones base: cliente android evita SABR/HLS y errores de firma del cliente web.
             # continuedl/overwrites en False/True fuerzan una descarga limpia en vez de intentar
@@ -574,7 +585,7 @@ def yt_downloader():
                     "480p": "bestvideo[height<=480]+bestaudio/best",
                     "360p": "bestvideo[height<=360]+bestaudio/best",
                 }
-                fmt = quality_map.get(st.session_state["quality"], "bestvideo+bestaudio/best")
+                fmt = quality_map.get(job[2], "bestvideo+bestaudio/best")
                 ydl_opts = {
                     **base_opts,
                     "outtmpl": "video.mp4",
@@ -621,7 +632,13 @@ def yt_downloader():
             if cookie_method == "From file" and os.path.exists(cookie_path):
                 os.remove(cookie_path)
 
-            if result and os.path.exists(filename):
+            # El resultado (incluido un fallo) se cachea siempre: así un rerun no
+            # reintenta la descarga una y otra vez.
+            cached = {"job": job}
+
+            if result and "error" in result:
+                cached["error"] = result["error"]
+            elif result and os.path.exists(filename):
                 # writethumbnail deja la miniatura junto al mp3 ("audio.webp"/"audio.jpg").
                 for thumb in [p for p in glob.glob("audio.*") if p != filename]:
                     try:
@@ -635,23 +652,34 @@ def yt_downloader():
                         except OSError:
                             pass
 
-                file_size = format_file_size(os.path.getsize(filename))
-
-                st.subheader(result["title"])
-                st.image(result["thumbnail_url"], width="stretch")
-                st.success(f"Download complete — {file_size}")
-
                 with open(filename, "rb") as f:
-                    buffer = io.BytesIO(f.read())
-
-                st.download_button(
-                    f"↓  {result['filename']} ({file_size})",
-                    data=buffer,
-                    file_name=result["filename"],
-                    mime=mime_type,
-                )
+                    cached["data"] = f.read()
+                cached["filename"] = result["filename"]
+                cached["title"] = result["title"]
+                cached["thumbnail_url"] = result["thumbnail_url"]
+                cached["mime"] = mime_type
 
                 os.remove(filename)
+            else:
+                cached["error"] = "The file could not be downloaded."
+
+            st.session_state["result"] = cached
+
+        if cached and cached.get("error"):
+            st.error(f"Error: {cached['error']}")
+        elif cached and cached.get("data"):
+            file_size = format_file_size(len(cached["data"]))
+
+            st.subheader(cached["title"])
+            st.image(cached["thumbnail_url"], width="stretch")
+            st.success(f"Download complete — {file_size}")
+
+            st.download_button(
+                f"↓  {cached['filename']} ({file_size})",
+                data=cached["data"],
+                file_name=cached["filename"],
+                mime=cached["mime"],
+            )
 
     with st.expander("Supported URL formats"):
         st.markdown("""
