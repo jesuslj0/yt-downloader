@@ -1,6 +1,7 @@
 # Aplicación web para descargar videos de YouTube en formato mp3 o mp4
 import streamlit as st
 import glob
+import html
 import io
 import os
 
@@ -328,6 +329,103 @@ h3 {
     padding: 1rem 1.1rem !important;
 }
 
+/* ── Buscador (lista compacta estilo YouTube) ── */
+.st-key-search-box [data-testid="stExpander"] {
+    margin-top: 0 !important;
+    margin-bottom: 1.25rem !important;
+}
+.st-key-search-box [data-testid="stVerticalBlock"] { gap: 1rem !important; }
+.st-key-search-box [data-testid="stHorizontalBlock"] { padding-bottom: 0.9rem !important; border-bottom: 1px solid #141414 !important; }
+.st-key-search-box [data-testid="stHorizontalBlock"]:last-of-type { border-bottom: none !important; }
+.st-key-search-box [data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important;
+    gap: 0.75rem !important;
+    align-items: center !important;
+}
+.st-key-search-box [data-testid="stColumn"] { min-width: 0 !important; }
+.ytc-thumb {
+    position: relative;
+    display: block;
+    width: 100%;
+    height: 0;
+    padding-bottom: 56.25%;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #141414;
+}
+.ytc-thumb img {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    object-fit: cover;
+    display: block;
+}
+.ytc-dur {
+    position: absolute;
+    right: 4px; bottom: 4px;
+    z-index: 2;
+    background: rgba(0,0,0,0.88);
+    color: #fff !important;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.68rem;
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: 0;
+    padding: 3px 5px;
+    border-radius: 3px;
+    white-space: nowrap;
+}
+.ytc-dur.live { background: #e02020; }
+.st-key-search-box [data-testid="stMarkdownContainer"],
+.st-key-search-box [data-testid="stElementContainer"] {
+    overflow: visible !important;
+}
+.ytc-meta { min-width: 0; }
+.ytc-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #e0e0e0;
+    line-height: 1.25;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.ytc-channel {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.62rem;
+    color: #606060;
+    margin-top: 0.2rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.st-key-search-box .stButton button,
+.st-key-search-box .stLinkButton a {
+    background: transparent !important;
+    color: #909090 !important;
+    border: 1px solid #222 !important;
+    border-radius: 4px !important;
+    font-family: 'Syne', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 0.65rem !important;
+    letter-spacing: 0.06em !important;
+    text-transform: uppercase !important;
+    padding: 0.4rem 0.6rem !important;
+    min-height: 0 !important;
+    white-space: nowrap !important;
+    transition: all 0.12s !important;
+}
+.st-key-search-box .stButton button:hover,
+.st-key-search-box .stLinkButton a:hover {
+    border-color: #e02020 !important;
+    color: #e02020 !important;
+    background: rgba(224,32,32,0.04) !important;
+}
+
 /* ── Markdown ── */
 .stMarkdown p, .stMarkdown li {
     font-family: 'IBM Plex Mono', monospace !important;
@@ -425,6 +523,104 @@ def embed_square_cover(mp3_path, thumb_path):
     tags.save(mp3_path)
 
 
+def format_duration(seconds):
+    if not seconds:
+        return ""
+    seconds = int(seconds)
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def search_youtube(query, limit=8):
+    import yt_dlp as ydl
+
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True}
+    try:
+        with ydl.YoutubeDL(opts) as ydl_:
+            info = ydl_.extract_info(f"ytsearch{limit}:{query}", download=False)
+    except Exception as ex:
+        return {"error": str(ex)}
+
+    results = []
+    for entry in (info or {}).get("entries", []):
+        if not entry or not entry.get("id"):
+            continue
+        results.append({
+            "id": entry["id"],
+            "title": entry.get("title") or "Untitled",
+            "channel": entry.get("channel") or entry.get("uploader") or "",
+            "duration": entry.get("duration"),
+            "live": entry.get("live_status") == "is_live",
+        })
+    return {"results": results}
+
+
+def use_search_result(video_id):
+    # Callback de botón: se ejecuta antes del rerun, así que puede reescribir el input.
+    st.session_state["input-url"] = f"https://www.youtube.com/watch?v={video_id}"
+
+
+def render_search():
+    with st.container(key="search-box"):
+        with st.expander("🔍 Search songs & videos"):
+            query = st.text_input(
+                "Search",
+                placeholder="Song, artist or video title...",
+                key="search-query",
+            ).strip()
+            if not query:
+                return
+
+            with st.spinner("Searching..."):
+                data = search_youtube(query)
+
+            if "error" in data:
+                st.error(f"Error: {data['error']}")
+                return
+            if not data["results"]:
+                st.caption("No results.")
+                return
+
+            for item in data["results"]:
+                thumb_col, meta_col, use_col, listen_col = st.columns([2.2, 3.4, 1, 1.5], vertical_alignment="center")
+                with thumb_col:
+                    badge = (
+                        '<span class="ytc-dur live">LIVE</span>' if item["live"]
+                        else f'<span class="ytc-dur">{format_duration(item["duration"])}</span>'
+                        if item["duration"] else ""
+                    )
+                    st.markdown(
+                        f'<div class="ytc-thumb">'
+                        f'<img src="https://i.ytimg.com/vi/{item["id"]}/mqdefault.jpg" loading="lazy">'
+                        f'{badge}</div>',
+                        unsafe_allow_html=True,
+                    )
+                with meta_col:
+                    st.markdown(
+                        f'<div class="ytc-meta">'
+                        f'<div class="ytc-title">{html.escape(item["title"])}</div>'
+                        f'<div class="ytc-channel">{html.escape(item["channel"])}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                with use_col:
+                    st.button(
+                        "Use",
+                        key=f"use-{item['id']}",
+                        on_click=use_search_result,
+                        args=(item["id"],),
+                        use_container_width=True,
+                    )
+                with listen_col:
+                    st.link_button(
+                        "Listen",
+                        f"https://www.youtube.com/watch?v={item['id']}",
+                        use_container_width=True,
+                    )
+
+
 def download(ydl_opts, url, filename):
     import yt_dlp as ydl
 
@@ -496,6 +692,8 @@ def yt_downloader():
                     )
                     if uploaded is not None:
                         st.session_state["cookie_file_bytes"] = uploaded.read()
+
+        render_search()
 
         with url_form:
             input_col, spinner_col, button_col, clear_col = st.columns(
